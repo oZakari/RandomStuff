@@ -35,87 +35,76 @@ it would be easy to change the script to look for a subscription level "Owner" o
 which could then be read and the values added to the action group!
 #>
 
-$subs = Get-Content -Path sublist.txt #this file should have one subscription ID per line
-$roles = @('Owner','Contributor') #These roles at the sub level if have email will be added to an action group to receive service health alerts
+$subs = Get-Content -Path AzureVarious\sublist.txt #this file should have one subscription ID per line
+$roles = @('Owner', 'Contributor') #These roles at the sub level if have email will be added to an action group to receive service health alerts
 #Enable one of the following based on if there are specific groups that have roles you DON'T want included in health alerts
 #$groupsToSkip = @('Jl','Avengers')
 $groupsToSkip = @() #if none
 
-$nameOfAlertRule = "Core-ServiceHealth-AR-DONOTRENAMEORDELETE"
-$nameOfAlertRuleDesc = "Core ServiceHealth Alert Rule DO NOT DELETE OR RENAME"
-$nameOfActionGroup = "Core-ServiceHealth-AG-DONOTRENAMEORDELETE"
-$nameOfActionGroupShort = "Core-SH-AG" #12 characters or less
-$nameOfCoreResourceGroup = "Core-ServiceHealth-RG-DONOTRENAMEORDELETE"
-$nameOfLocation = "eastus2"
+$nameOfAlertRule = "ZT-ServiceHealth-AR-DONOTRENAMEORDELETE"
+$nameOfAlertRuleDesc = "ZT ServiceHealth Alert Rule DO NOT DELETE OR RENAME"
+$nameOfActionGroup = "ZT-ServiceHealth-AG-DONOTRENAMEORDELETE"
+$nameOfActionGroupShort = "ZT-SH-AG" #12 characters or less
+$nameOfCoreResourceGroup = "ZT-ServiceHealth-RG-DONOTRENAMEORDELETE"
+$nameOfLocation = "centralus"
 
 
 Write-Output "Input $($subs.count) subscriptions."
 $confirmation = Read-Host "Are you Sure You Want To Proceed:"
-if ($confirmation -ne 'y')
-{
+if ($confirmation -ne 'y') {
     Write-Output "exiting"
     exit
 }
 
-foreach ($sub in $subs)
-{
+foreach ($sub in $subs) {
     $errorFound = $false
 
     #Set context to target subscription
     Write-Output "Subscription $sub"
     try {
         Set-AzContext -Subscription $sub -ErrorAction Stop
-    }
-    catch {
+    } catch {
         Write-Error "!! Subscription error:"
         Write-Error $_
         $errorFound = $true
     }
 
-    if(!$errorFound) #if no error
-    {
+    if (!$errorFound) { #if no error
         $subScope = "/subscriptions/$sub"
         $emailsToAdd = @()
 
         #check the core RG exists
         $coreRG = Get-AzResourceGroup -Name $nameOfCoreResourceGroup -ErrorAction SilentlyContinue
-        if($null -eq $coreRG)
-        {
-            write-output "Creating core resource group $nameOfCoreResourceGroup"
+        if ($null -eq $coreRG) {
+            Write-Output "Creating core resource group $nameOfCoreResourceGroup"
             New-AzResourceGroup -Name $nameOfCoreResourceGroup -Location $nameOfLocation
         }
 
-        foreach($role in $roles)
-        {
+        foreach ($role in $roles) {
             Write-Verbose "Role $role"
             #Note this will get all of this role at this scope and CHILD (e.g. also RGs so we have to continue to filter)
             $members = Get-AzRoleAssignment -Scope $subScope -RoleDefinitionName $role
             #$members | ft objectType, RoleDefinitionName, DisplayName, SignInName
 
             foreach ($member in $members) {
-                if($member.scope -eq $subScope) #need to check specific to this sub and not inherited from MG or a child RG
-                {
+                if ($member.scope -eq $subScope) { #need to check specific to this sub and not inherited from MG or a child RG
                     Write-Verbose "$sub,$($member.DisplayName),$($member.SignInName),$($contrib.ObjectType)"
 
                     #Change to support groups and enumerate for members via Get-AzADGroupMember -GroupDisplayName
-                    if($member.ObjectType -eq 'Group')
-                    {
+                    if ($member.ObjectType -eq 'Group') {
                         #check if the group should be excluded ($groupsToSkip)
-                        if($groupsToSkip -notcontains $member.DisplayName)
-                        {
+                        if ($groupsToSkip -notcontains $member.DisplayName) {
                             Write-Verbose "Group found $($member.DisplayName) - Expanding"
                             $groupMembers = Get-AzADGroupMember -GroupDisplayName $member.DisplayName
-                            $emailsToAdd += $groupmembers | Where-Object {$_.Mail -ne $null} | select-object -ExpandProperty Mail #we only add if has an email attribute
+                            $emailsToAdd += $groupmembers | Where-Object { $_.Mail -ne $null } | Select-Object -ExpandProperty Mail #we only add if has an email attribute
                         }
                     }
 
                     #Can also check the email for users incase their email is different from UPN via Get-AzADUser -UserPrincipalName
-                    if($member.ObjectType -eq 'User')
-                    {
+                    if ($member.ObjectType -eq 'User') {
                         Write-Verbose "User found $($member.SignInName) - Checking for email attribute"
                         $userDetail = Get-AzADUser -UserPrincipalName $member.SignInName
-                        if($null -ne $userDetail.Mail)
-                        {
+                        if ($null -ne $userDetail.Mail) {
                             $emailsToAdd += $userDetail.Mail
                         }
                     }
@@ -128,11 +117,9 @@ foreach ($sub in $subs)
         #Look for the Action Group
         $AGObj = Get-AzActionGroup | Where-Object { $_.Name -eq $nameOfActionGroup }
         $AGObjFailure = $false
-        if($null -eq $AGObj) #not found
-        {
+        if ($null -eq $AGObj) { #not found
             Write-Output "Action Group not found, creating."
-            if($emailsToAdd.Count -gt 0)
-            {
+            if ($emailsToAdd.Count -gt 0) {
                 #Note there is also the ability to link directly to an ARM role which per the documentation only is if assigned AT THE SUB and NOT inherited
                 $emailReceivers = @()
                 foreach ($email in $emailsToAdd) {
@@ -142,24 +129,18 @@ foreach ($sub in $subs)
 
                 Set-AzActionGroup -ResourceGroupName $nameOfCoreResourceGroup -Name $nameOfActionGroup -ShortName $nameOfActionGroupShort -Receiver $emailReceivers
                 $AGObj = Get-AzActionGroup | Where-Object { $_.Name -eq $nameOfActionGroup }
-            }
-            else
-            {
+            } else {
                 Write-Error "!! Could not create action group for subscription $sub as no valid emails found. This will also stop alert rule creation"
                 $AGObjFailure = $true
             }
-        }
-        else
-        {
+        } else {
             #Is the list matching the current emails
             $currentEmails = $AGObj.EmailReceivers | Select-Object -ExpandProperty EmailAddress
 
             #need to check it is new ones added so side indicator would be => as would be in the emails to add
-            $differences = Compare-Object -ReferenceObject $currentEmails -DifferenceObject $emailsToAdd | Where-Object { $_.SideIndicator -eq "=>"}
-            if($null -ne $differences) #if there are differences
-            {
+            $differences = Compare-Object -ReferenceObject $currentEmails -DifferenceObject $emailsToAdd | Where-Object { $_.SideIndicator -eq "=>" }
+            if ($null -ne $differences) { #if there are differences
                 #add them together then find just the unique (we add the existing as could be manually added emails we want to keep)
-                $emailstoAdd += $currentEmails
                 $emailsToAdd = $emailsToAdd | Select-Object -Unique
 
                 #Now update the action group
