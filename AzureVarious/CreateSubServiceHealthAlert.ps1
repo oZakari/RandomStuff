@@ -41,6 +41,7 @@ $roles = @('Owner', 'Contributor') #These roles at the sub level if have email w
 #$groupsToSkip = @('Jl','Avengers')
 $groupsToSkip = @() #if none
 
+#Change names as needed
 $nameOfAlertRule = "ZT-ServiceHealth-AR-DONOTRENAMEORDELETE"
 $nameOfAlertRuleDesc = "ZT ServiceHealth Alert Rule DO NOT DELETE OR RENAME"
 $nameOfActionGroup = "ZT-ServiceHealth-AG-DONOTRENAMEORDELETE"
